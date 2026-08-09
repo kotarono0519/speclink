@@ -61,7 +61,7 @@ keywords: [単価, レート, 請求単価]  # 業務用語と実装用語がズ
 ```yaml
 scope:
   paths:
-    - myapp-web/src/features/billing/billing.ts
+    - myapp-web/src/features/billing/index.ts
     - myapp-api/app/modules/billing/service.py
 ```
 
