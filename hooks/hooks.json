@@ -20,6 +20,15 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/inject-on-edit.mjs\""
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/check-on-commit.mjs\""
+          }
+        ]
       }
     ]
   }
