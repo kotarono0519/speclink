@@ -22,6 +22,7 @@ if (!filePath) process.exit(0)
 
 const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()
 const relPath = path.relative(projectDir, filePath)
+const repoName = path.basename(projectDir)
 if (relPath.startsWith('..')) process.exit(0)
 
 // 編集内容（項目名での引き当てに使う）
@@ -31,7 +32,7 @@ const content = [ti.new_string, ti.content, ti.old_string]
   .join('\n')
 
 const docs = loadDocs(docsDir)
-const hits = matchDocs(docs, { relPath, content }).filter(
+const hits = matchDocs(docs, { relPath, content, repoName }).filter(
   (d) => d.kind === 'decision',
 )
 if (!hits.length) process.exit(0)

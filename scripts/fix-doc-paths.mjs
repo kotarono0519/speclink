@@ -9,7 +9,13 @@
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { loadDocs, readHookInput, resolveDocsDir, emit } from './lib/docs.mjs'
+import {
+  loadDocs,
+  pathForRepo,
+  readHookInput,
+  resolveDocsDir,
+  emit,
+} from './lib/docs.mjs'
 
 const input = await readHookInput()
 
@@ -42,21 +48,28 @@ for (const line of nameStatus.split('\n').filter(Boolean)) {
 }
 if (!renames.length && !deletions.length) process.exit(0)
 
+const repoName = path.basename(projectDir)
 const docs = loadDocs(docsDir)
 const fixed = []
+
+// 文書側の指し先は「リポジトリ名/パス」で書かれていることがある。
+// いま作業しているリポジトリのものだけを対象にする。
+const docPathsFor = (from) => [from, `${repoName}/${from}`]
 
 // 1. リネームに追従する（完全一致の指し先だけを書き換える。glob は当てずに残す）
 for (const { from, to } of renames) {
   for (const doc of docs) {
-    if (!doc.paths.includes(from)) continue
+    const hit = docPathsFor(from).find((p) => doc.paths.includes(p))
+    if (!hit) continue
     const file = path.join(docsDir, doc.file)
     const text = fs.readFileSync(file, 'utf8')
     const end = text.indexOf('\n---', 3)
     if (end === -1) continue
     // 冒頭の情報欄の中だけを書き換える（本文の同じ文字列は触らない）
-    const head = text.slice(0, end).split(from).join(to)
+    const replacement = hit.startsWith(`${repoName}/`) ? `${repoName}/${to}` : to
+    const head = text.slice(0, end).split(hit).join(replacement)
     fs.writeFileSync(file, head + text.slice(end))
-    fixed.push(`${doc.id}: ${from} → ${to}`)
+    fixed.push(`${doc.id}: ${hit} → ${replacement}`)
   }
 }
 
@@ -65,7 +78,9 @@ const brokenPaths = []
 for (const doc of loadDocs(docsDir)) {
   for (const p of doc.paths) {
     if (/[*?]/.test(p)) continue // 場所の指定に記号が入るものは実在判定をしない
-    if (!fs.existsSync(path.join(projectDir, p))) {
+    const rel = pathForRepo(p, repoName)
+    if (rel === null) continue // 別のリポジトリを指している文書は、ここでは判定しない
+    if (!fs.existsSync(path.join(projectDir, rel))) {
       brokenPaths.push(`${doc.id}: ${p}`)
     }
   }

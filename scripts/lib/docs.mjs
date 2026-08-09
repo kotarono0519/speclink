@@ -179,15 +179,46 @@ export function globMatch(pattern, target) {
 }
 
 /**
+ * 1 つの文書置き場を複数のリポジトリで共有できるようにする。
+ *
+ * 文書の指し先は「myapp-web/src/...」のようにリポジトリ名から書いてよい
+ * （決定は画面・API・インフラにまたがるので、リポジトリ名が無いと区別できない）。
+ * 照合するときは、いま作業しているリポジトリの名前を先頭から外す。
+ * 別のリポジトリを指している文書は、ここで対象外になる。
+ *
+ * @returns 照合に使う相対パス。別リポジトリを指していれば null
+ */
+export function pathForRepo(docPath, repoName) {
+  if (!repoName) return docPath
+  const prefix = repoName + '/'
+  if (docPath.startsWith(prefix)) return docPath.slice(prefix.length)
+  // リポジトリ名で始まらないものは、どのリポジトリでも共通の書き方とみなす。
+  // ただし別のリポジトリ名で始まっていれば対象外。
+  const head = docPath.split('/')[0]
+  if (KNOWN_REPO_PREFIX.test(head) && head !== repoName) return null
+  return docPath
+}
+
+// 「リポジトリ名らしい先頭要素」の判定。拡張子を持たず、ソースの入り口として
+// よく使う名前でもないもの（src / app / lib など）をリポジトリ名とみなす。
+const KNOWN_REPO_PREFIX =
+  /^(?!src$|app$|lib$|components$|features$|packages$|apps$|tests?$|docs$)[a-z0-9][a-z0-9._-]*$/i
+
+/**
  * 触っているファイル（と、あれば編集内容）に効く文書を引き当てる。
  * 引き当ての鍵は「コードの場所」と「項目名」だけ。本文は検索しない。
+ *
+ * repoName を渡すと、指し先の先頭に付いたリポジトリ名を外して照合する。
  */
-export function matchDocs(docs, { relPath, content }) {
+export function matchDocs(docs, { relPath, content, repoName }) {
   const hits = []
   for (const doc of docs) {
     if (doc.status !== 'active') continue
     let reason = null
-    if (relPath && doc.paths.some((p) => globMatch(p, relPath))) {
+    const paths = doc.paths
+      .map((p) => pathForRepo(p, repoName))
+      .filter((p) => p !== null)
+    if (relPath && paths.some((p) => globMatch(p, relPath))) {
       reason = 'path'
     } else if (content && doc.fields.length) {
       const hit = doc.fields.find((f) =>

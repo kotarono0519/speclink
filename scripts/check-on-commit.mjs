@@ -70,6 +70,7 @@ try {
   // 記録できなくても本題は続ける
 }
 
+const repoName = path.basename(projectDir)
 const docs = loadDocs(docsDir)
 const usecases = docs.filter((d) => d.kind === 'usecase' && d.status === 'active')
 
@@ -79,7 +80,7 @@ const newFiles = meaningful.filter((r) => r.status === 'A')
 // 手がかり 2: 既存のユースケースが指す場所を触った（本文がまだ正しいか確認が要る）
 const touched = new Map()
 for (const r of meaningful) {
-  for (const uc of matchDocs(usecases, { relPath: r.file })) {
+  for (const uc of matchDocs(usecases, { relPath: r.file, repoName })) {
     if (!touched.has(uc.id)) touched.set(uc.id, uc)
   }
 }
@@ -87,7 +88,7 @@ for (const r of meaningful) {
 // 手がかり 3: どのユースケースにも紐づかない変更（文書が抜けている可能性）
 // ユースケースが 1 件も無いうちは全件が該当してしまい、毎回発火して読み飛ばされるので使わない。
 const unlinked = usecases.length
-  ? meaningful.filter((r) => matchDocs(usecases, { relPath: r.file }).length === 0)
+  ? meaningful.filter((r) => matchDocs(usecases, { relPath: r.file, repoName }).length === 0)
   : []
 
 // どの手がかりにも掛からなければ黙って通す
