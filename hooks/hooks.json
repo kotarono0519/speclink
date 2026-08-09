@@ -49,6 +49,16 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/recall-on-prompt.mjs\""
+          }
+        ]
+      }
     ]
   }
 }

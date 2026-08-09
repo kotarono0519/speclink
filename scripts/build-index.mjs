@@ -39,8 +39,11 @@ const label = {
 const projectName = path.basename(docsDir)
 
 const entry = (d) => {
+  // 説明は「何を決めたか」＋「どのコードの話か」。設計を考えている段階では
+  // 対象範囲が「自分に関係あるか」の手がかりになる。
   const note = d.summary || d.title
-  return `- [${d.id} ${d.title}](${d.file}): ${note}`
+  const scope = d.paths.length ? ` 対象: ${d.paths.join(' ')}` : ''
+  return `- [${d.id} ${d.title}](${d.file}): ${note}。${scope}`.replace('。 対象', '。 対象')
 }
 
 const lines = [
