@@ -28,25 +28,54 @@ fs.writeFileSync(
   JSON.stringify({ generatedFrom: 'speclink', docs }, null, 2) + '\n',
 )
 
-// 人が読む索引。1 文書 1 行を守る（3 行に増やすと入口のコストが 3 倍になる）
+// 索引は llms.txt の規約に従う（H1 → 引用の要約 → H2 の節 → 「- [題名](場所): 説明」）。
+// 会話の開始時にはこのファイルの場所だけを知らせ、中身は必要になったときに開かせる。
+// 破棄済みの文書は「Optional」の節へ置く（規約上「余裕が無ければ飛ばしてよい」節）。
 const label = {
   requirements: '要件',
   usecases: 'ユースケース',
   decisions: '決定',
 }
-const lines = ['# 索引', '', '<!-- speclink が自動生成。手で編集しない。 -->', '']
+const projectName = path.basename(docsDir)
+
+const entry = (d) => {
+  const note = d.summary || d.title
+  return `- [${d.id} ${d.title}](${d.file}): ${note}`
+}
+
+const lines = [
+  `# ${projectName}`,
+  '',
+  '> このリポジトリの設計文書の索引。設計や仕様の判断を始める前にここを読み、',
+  '> 関係する文書だけを開くこと。新しく決めたことは /doc-new で残すこと。',
+  '',
+  'speclink が自動生成する。手で編集しない。',
+  '',
+  '各文書の冒頭には対象範囲（どのコードに効くか）が書いてある。',
+  'コードを触るときは speclink が該当する決定を自動で差し出すので、ここを読む必要はない。',
+  '',
+]
+
 for (const kind of KINDS) {
-  const list = byKind[kind]
+  const list = byKind[kind].filter((d) => d.status === 'active')
   if (!list.length) continue
   lines.push(`## ${label[kind]}`, '')
-  for (const d of list) {
-    const flag = d.status === 'active' ? '' : ` [${d.status}]`
-    const summary = d.summary ? ` — ${d.summary}` : ''
-    lines.push(`- [${d.id}](${d.file}) ${d.title}${flag}${summary}`)
-  }
+  list.forEach((d) => lines.push(entry(d)))
   lines.push('')
 }
-fs.writeFileSync(path.join(docsDir, 'INDEX.md'), lines.join('\n'))
+
+// 破棄・却下された文書。履歴として残すが、平常時は読ませない。
+const retired = docs.filter((d) => d.status !== 'active')
+if (retired.length) {
+  lines.push('## Optional', '')
+  lines.push('過去の文書（破棄・却下済み）。経緯を追うとき以外は読まなくてよい。', '')
+  retired.forEach((d) => lines.push(`${entry(d)}（${d.status}）`))
+  lines.push('')
+}
+
+const indexBody = lines.join('\n')
+fs.writeFileSync(path.join(docsDir, 'llms.txt'), indexBody)
+fs.writeFileSync(path.join(docsDir, 'INDEX.md'), indexBody)
 
 // 範囲指定の粗さを検査する。フォルダ全体を指す書き方は発火しすぎの原因になる。
 const tooBroad = docs.filter((d) =>

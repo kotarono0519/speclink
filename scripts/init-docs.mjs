@@ -40,7 +40,7 @@ if (!fs.existsSync(readme)) {
 | \`usecases/\` | 誰が何を達成するか（引き当ての鍵を持つ） |
 | \`decisions/\` | なぜその作りにしたか（却下案と理由） |
 
-- 一覧は [INDEX.md](INDEX.md)。**自動生成なので手で編集しない。**
+- 一覧は [llms.txt](llms.txt)（同じ内容の [INDEX.md](INDEX.md) もある）。**自動生成なので手で編集しない。**
 - 新しく決めたことは \`/doc-new\` で残す。
 - 変更と文書のズレは \`/doc-sync\` で確認する。
 - 書き方の規約は speclink の \`reference/format.md\`。
