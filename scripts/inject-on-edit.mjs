@@ -10,6 +10,7 @@ import {
   emit,
   seenFilter,
 } from './lib/docs.mjs'
+import { record, docsSnapshot } from './lib/log.mjs'
 
 const MAX_SHOWN = 3
 
@@ -35,7 +36,22 @@ const docs = loadDocs(docsDir)
 const hits = matchDocs(docs, { relPath, content, repoName }).filter(
   (d) => d.kind === 'decision',
 )
-if (!hits.length) process.exit(0)
+const log = (fired, shown = []) =>
+  record({
+    event: 'edit',
+    repo: repoName,
+    session: input.session_id,
+    file: relPath,
+    fired,
+    matched: hits.map((h) => h.id),
+    shown,
+    docs: docsSnapshot(docsDir),
+  })
+
+if (!hits.length) {
+  log(false)
+  process.exit(0)
+}
 
 // 同じ会話で一度出したものは繰り返さない
 const freshIds = new Set(
@@ -45,7 +61,10 @@ const freshIds = new Set(
   ),
 )
 const fresh = hits.filter((h) => freshIds.has(h.id))
-if (!fresh.length) process.exit(0)
+if (!fresh.length) {
+  log(false)
+  process.exit(0)
+}
 
 let text
 if (fresh.length > MAX_SHOWN) {
@@ -64,4 +83,5 @@ if (fresh.length > MAX_SHOWN) {
       .join('\n')
 }
 
+log(true, fresh.map((d) => d.id))
 emit('PreToolUse', text)

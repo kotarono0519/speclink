@@ -16,6 +16,7 @@ import {
   resolveDocsDir,
   emit,
 } from './lib/docs.mjs'
+import { record, docsSnapshot } from './lib/log.mjs'
 
 const input = await readHookInput()
 
@@ -85,6 +86,16 @@ for (const doc of loadDocs(docsDir)) {
     }
   }
 }
+
+record({
+  event: 'paths',
+  repo: repoName,
+  session: input.session_id,
+  fired: Boolean(fixed.length || brokenPaths.length),
+  renamed: fixed.length,
+  broken: brokenPaths.length,
+  docs: docsSnapshot(docsDir),
+})
 
 if (!fixed.length && !brokenPaths.length) process.exit(0)
 

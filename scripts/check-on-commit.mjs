@@ -14,6 +14,7 @@ import {
   resolveDocsDir,
   emit,
 } from './lib/docs.mjs'
+import { record, docsSnapshot } from './lib/log.mjs'
 
 const input = await readHookInput()
 
@@ -91,8 +92,27 @@ const unlinked = usecases.length
   ? meaningful.filter((r) => matchDocs(usecases, { relPath: r.file, repoName }).length === 0)
   : []
 
+const log = (fired) =>
+  record({
+    event: 'commit',
+    repo: repoName,
+    session: input.session_id,
+    fired,
+    files: meaningful.length,
+    signals: {
+      newFiles: newFiles.length,
+      touched: [...touched.keys()],
+      unlinked: unlinked.length,
+    },
+    docs: docsSnapshot(docsDir),
+  })
+
 // どの手がかりにも掛からなければ黙って通す
-if (!newFiles.length && !touched.size && !unlinked.length) process.exit(0)
+if (!newFiles.length && !touched.size && !unlinked.length) {
+  log(false)
+  process.exit(0)
+}
+log(true)
 
 const list = (arr, n = 8) =>
   arr

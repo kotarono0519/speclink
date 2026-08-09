@@ -9,6 +9,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { readHookInput, resolveDocsDir, emit } from './lib/docs.mjs'
+import { record, docsSnapshot } from './lib/log.mjs'
 
 const input = await readHookInput()
 const docsDir = resolveDocsDir(input.cwd || process.cwd())
@@ -34,6 +35,15 @@ if (dataDir && input.session_id) {
     // 記録できなくても本題は続ける
   }
 }
+
+record({
+  event: 'decision',
+  repo: path.basename(process.env.CLAUDE_PROJECT_DIR ?? input.cwd ?? ''),
+  session: input.session_id,
+  fired: true,
+  tool,
+  docs: docsSnapshot(docsDir),
+})
 
 const common = [
   '設計文書の記録（speclink）。**いま決定が 1 つ確定した。**',
