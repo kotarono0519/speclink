@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "speclink",
+  "displayName": "speclink",
+  "version": "0.1.0",
+  "description": "要件・ユースケース・設計判断を溜め、触っているコードから自動で引き当てる",
+  "author": {
+    "name": "kotarono0519"
+  },
+  "repository": "https://github.com/kotarono0519/speclink",
+  "license": "MIT",
+  "keywords": ["documentation", "design-decisions", "requirements", "adr"],
+  "userConfig": {
+    "docs_dir": {
+      "type": "directory",
+      "title": "文書リポジトリのパス",
+      "description": "要件・ユースケース・決定を置くディレクトリ（例: /Users/you/dev/myapp-docs）。未設定のときはプロジェクト直下の .speclink.json の docsDir を読む。",
+      "required": false
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "speclink",
+  "description": "設計文書を溜め、触っているコードから自動で引き当てるツール",
+  "owner": {
+    "name": "kotarono0519"
+  },
+  "plugins": [
+    {
+      "name": "speclink",
+      "source": "./",
+      "description": "要件・ユースケース・設計判断を溜め、触っているコードから自動で引き当てる"
+    }
+  ]
+}
