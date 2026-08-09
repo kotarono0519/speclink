@@ -124,7 +124,7 @@ scope:
 
 ## 索引
 
-`llms.txt` / `INDEX.md` / `.speclink/index.json` は **`build-index.mjs` が自動生成する**。手で編集しない。
+`llms.txt` と `.speclink/index.json` は **`build-index.mjs` が自動生成する**。手で編集しない。
 
 索引は `llms.txt` の規約（H1 → 引用の要約 → H2 の節 → `- [題名](場所): 説明`）に従う。
 会話の開始時に差し込むのは**この索引の場所だけ**で、中身は必要になったときに開かせる。

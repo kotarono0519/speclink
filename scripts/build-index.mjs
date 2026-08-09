@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 文書の冒頭情報から索引を組み立てる。手で書かない（手で書くと必ず腐るため）。
-// 出力: <docs>/INDEX.md（人が読む） と <docs>/.speclink/index.json（機械が読む）
+// 出力: <docs>/llms.txt（索引・人も読む） と <docs>/.speclink/index.json（引き当て用）
 import fs from 'node:fs'
 import path from 'node:path'
 import { loadDocs, resolveDocsDir, KINDS } from './lib/docs.mjs'
@@ -73,9 +73,9 @@ if (retired.length) {
   lines.push('')
 }
 
-const indexBody = lines.join('\n')
-fs.writeFileSync(path.join(docsDir, 'llms.txt'), indexBody)
-fs.writeFileSync(path.join(docsDir, 'INDEX.md'), indexBody)
+// 索引は llms.txt の 1 本だけ。中身は Markdown なので人もそのまま読める。
+// 同じ内容のファイルを 2 つ置くと、どちらが正かで迷う。
+fs.writeFileSync(path.join(docsDir, 'llms.txt'), lines.join('\n'))
 
 // 範囲指定の粗さを検査する。フォルダ全体を指す書き方は発火しすぎの原因になる。
 const tooBroad = docs.filter((d) =>
