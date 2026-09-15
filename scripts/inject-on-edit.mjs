@@ -19,7 +19,7 @@ import {
   emit,
   seenFilter,
 } from './lib/docs.mjs'
-import { record, docsSnapshot } from './lib/log.mjs'
+import { record, docsSnapshot, repoOf } from './lib/log.mjs'
 
 const MAX_SHOWN = 3
 
@@ -29,7 +29,7 @@ if (!docsDir) process.exit(0)
 
 const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()
 const cwd = input.cwd || projectDir
-const repoName = path.basename(projectDir)
+const { repo: repoName, worktree } = repoOf(projectDir)
 const ti = input.tool_input ?? {}
 
 // 編集先（プロジェクト内の相対パス）と、項目名での引き当てに使う本文
@@ -61,6 +61,7 @@ const log = (fired, shown = []) =>
   record({
     event: 'edit',
     repo: repoName,
+    worktree,
     session: input.session_id,
     via: input.tool_name === 'Bash' ? 'bash' : 'tool',
     file: relPaths[0],

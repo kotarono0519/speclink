@@ -6,7 +6,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { loadDocs } from './docs.mjs'
+import { loadDocs, mainCheckoutOf } from './docs.mjs'
 
 const LOG_NAME = 'events.jsonl'
 
@@ -41,6 +41,21 @@ function logFile() {
   } catch {
     return null
   }
+}
+
+/**
+ * 記録と照合に使うリポジトリ名。作業コピー（git worktree）なら本体チェックアウトの名前を返す。
+ * 作業コピーは切っては捨てるものなので、その名前で数えると 1 つのプロジェクトの記録が
+ * レーンの数だけ散らばり、/doc-stats の --repo で拾えなくなる（miroir-fe で関所 1 回が落ちた）。
+ * 文書の指し先（scope.paths の「リポジトリ名/」）を作業コピーで照合するときも、この名前が要る。
+ * 作業コピーの名前は worktree として別に返す。
+ */
+export function repoOf(projectDir) {
+  const dir = projectDir || ''
+  const name = path.basename(dir)
+  const main = dir ? mainCheckoutOf(dir) : null
+  if (!main) return { repo: name, worktree: null }
+  return { repo: path.basename(main), worktree: name }
 }
 
 /**

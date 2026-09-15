@@ -11,7 +11,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { loadDocs, readHookInput, resolveDocsDir, emit } from './lib/docs.mjs'
-import { record, docsSnapshot } from './lib/log.mjs'
+import { record, docsSnapshot, repoOf } from './lib/log.mjs'
 
 const MAX_SHOWN = 3
 const MIN_TERM = 2 // これより短い語は無視する（誤って当たるため）
@@ -124,7 +124,7 @@ function saveSeen(sessionId, seen, ids) {
 function logResult(fired, shownIds) {
   record({
     event: 'recall',
-    repo: path.basename(process.env.CLAUDE_PROJECT_DIR ?? input.cwd ?? ''),
+    ...repoOf(process.env.CLAUDE_PROJECT_DIR ?? input.cwd ?? ''),
     session: input.session_id,
     fired,
     candidates: scored.length,

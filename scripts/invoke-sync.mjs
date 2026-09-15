@@ -13,7 +13,7 @@ import {
   resolveDocsDir,
   emit,
 } from './lib/docs.mjs'
-import { record, docsSnapshot } from './lib/log.mjs'
+import { record, docsSnapshot, repoOf } from './lib/log.mjs'
 
 const input = await readHookInput()
 
@@ -25,7 +25,7 @@ const docsDir = resolveDocsDir(input.cwd || process.cwd())
 if (!docsDir) process.exit(0)
 
 const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()
-const repoName = path.basename(projectDir)
+const { repo: repoName, worktree } = repoOf(projectDir)
 
 let staged = ''
 try {
@@ -52,6 +52,7 @@ const log = (fired) =>
   record({
     event: 'sync',
     repo: repoName,
+    worktree,
     session: input.session_id,
     fired,
     files: files.length,

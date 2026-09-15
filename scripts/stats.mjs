@@ -10,7 +10,8 @@ const repoArg = args.includes('--repo') ? args[args.indexOf('--repo') + 1] : nul
 
 const since = Date.now() - days * 24 * 60 * 60 * 1000
 let events = readLog().filter((e) => new Date(e.at).getTime() >= since)
-if (repoArg) events = events.filter((e) => e.repo === repoArg)
+// 作業コピーの記録は本体名で付くが、古い記録は作業コピー名のままなので worktree でも拾う
+if (repoArg) events = events.filter((e) => e.repo === repoArg || e.worktree === repoArg)
 
 if (!events.length) {
   console.log(`直近 ${days} 日の記録はありません。`)
@@ -24,16 +25,46 @@ const line = (s = '') => console.log(s)
 line(`speclink の働き（直近 ${days} 日${repoArg ? ` / ${repoArg}` : ''}）`)
 line()
 
+/** 出た文書の上位 5 件を 1 行にする */
+const topShown = (fired) => {
+  const counts = new Map()
+  for (const e of fired) for (const id of e.shown ?? []) counts.set(id, (counts.get(id) ?? 0) + 1)
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)
+}
+
+// --- 相談された瞬間 ---
+// 発言の語から思い出す経路。件数がいちばん多く、読む側が効いているかはここで分かる。
+const recalls = by('recall')
+if (recalls.length) {
+  const fired = recalls.filter((e) => e.fired)
+  line(`## 相談された瞬間`)
+  line(`${recalls.length} 回中 ${fired.length} 回で思い出した（${pct(fired.length, recalls.length)}%）`)
+  const top = topShown(fired)
+  if (top.length) line(`よく出る文書: ${top.map(([id, n]) => `${id}（${n} 回）`).join(' ')}`)
+  const shownCounts = fired.map((e) => (e.shown ?? []).length)
+  if (shownCounts.length) {
+    const avg = (shownCounts.reduce((a, b) => a + b, 0) / shownCounts.length).toFixed(1)
+    line(`1 回あたり平均 ${avg} 件（上限 3 件）`)
+  }
+  if (pct(fired.length, recalls.length) >= 80) line(`→ ほぼ毎回出ている。呼び名（keywords）が広すぎる可能性がある`)
+  line()
+}
+
 // --- コード編集の直前 ---
 const edits = by('edit')
 if (edits.length) {
   const fired = edits.filter((e) => e.fired)
   line(`## コード編集の直前`)
   line(`${edits.length} 回中 ${fired.length} 回で差し込み（${pct(fired.length, edits.length)}%）`)
+  // 経路の内訳。Bash 経由（sed / リダイレクト）が 0 なら、自動モードの編集を拾えていない
+  const viaBash = edits.filter((e) => e.via === 'bash')
+  const viaTool = edits.filter((e) => e.via !== 'bash')
+  line(
+    `経路: Edit / Write ${viaTool.length} 回（差し込み ${viaTool.filter((e) => e.fired).length}）` +
+      ` / Bash ${viaBash.length} 回（差し込み ${viaBash.filter((e) => e.fired).length}）`,
+  )
 
-  const counts = new Map()
-  for (const e of fired) for (const id of e.shown ?? []) counts.set(id, (counts.get(id) ?? 0) + 1)
-  const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)
+  const top = topShown(fired)
   if (top.length) {
     line(`よく出る文書: ${top.map(([id, n]) => `${id}（${n} 回）`).join(' ')}`)
   }
@@ -98,9 +129,9 @@ if (paths.length) {
 const docsDir = resolveDocsDir(process.cwd())
 if (docsDir) {
   const all = loadDocs(docsDir).filter((d) => d.kind === 'decision' && d.status === 'active')
-  const seen = new Set(edits.flatMap((e) => e.shown ?? []))
+  const seen = new Set([...edits, ...recalls].flatMap((e) => e.shown ?? []))
   const never = all.filter((d) => !seen.has(d.id))
-  line(`## 一度も出ていない決定`)
+  line(`## 一度も出ていない決定（編集でも相談でも）`)
   line(`${never.length} / ${all.length} 件`)
   if (never.length) {
     line(`${never.slice(0, 10).map((d) => d.id).join(' ')}${never.length > 10 ? ' ほか' : ''}`)

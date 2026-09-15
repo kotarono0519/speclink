@@ -14,7 +14,7 @@ import {
   resolveDocsDir,
   emit,
 } from './lib/docs.mjs'
-import { record, docsSnapshot } from './lib/log.mjs'
+import { record, docsSnapshot, repoOf } from './lib/log.mjs'
 
 const input = await readHookInput()
 
@@ -71,7 +71,7 @@ try {
   // 記録できなくても本題は続ける
 }
 
-const repoName = path.basename(projectDir)
+const { repo: repoName, worktree } = repoOf(projectDir)
 const docs = loadDocs(docsDir)
 const usecases = docs.filter((d) => d.kind === 'usecase' && d.status === 'active')
 
@@ -96,6 +96,7 @@ const log = (fired) =>
   record({
     event: 'commit',
     repo: repoName,
+    worktree,
     session: input.session_id,
     fired,
     files: meaningful.length,

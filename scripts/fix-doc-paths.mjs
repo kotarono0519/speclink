@@ -16,7 +16,7 @@ import {
   resolveDocsDir,
   emit,
 } from './lib/docs.mjs'
-import { record, docsSnapshot } from './lib/log.mjs'
+import { record, docsSnapshot, repoOf } from './lib/log.mjs'
 
 const input = await readHookInput()
 
@@ -49,7 +49,7 @@ for (const line of nameStatus.split('\n').filter(Boolean)) {
 }
 if (!renames.length && !deletions.length) process.exit(0)
 
-const repoName = path.basename(projectDir)
+const { repo: repoName, worktree } = repoOf(projectDir)
 const docs = loadDocs(docsDir)
 const fixed = []
 
@@ -90,6 +90,7 @@ for (const doc of loadDocs(docsDir)) {
 record({
   event: 'paths',
   repo: repoName,
+  worktree,
   session: input.session_id,
   fired: Boolean(fixed.length || brokenPaths.length),
   renamed: fixed.length,

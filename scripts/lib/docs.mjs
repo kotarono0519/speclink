@@ -50,7 +50,7 @@ function readLocalConfig(dir) {
  * "gitdir: <本体>/.git/worktrees/<名前>" になっている。git コマンドは呼ばない
  * （フックは毎回走るので、プロセス起動のコストを避ける）。
  */
-function mainCheckoutOf(dir) {
+export function mainCheckoutOf(dir) {
   const dotGit = path.join(dir, '.git')
   let stat
   try {
