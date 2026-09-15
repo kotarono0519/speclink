@@ -1,6 +1,15 @@
 #!/usr/bin/env node
 // コードを編集する直前に、その場所に効く決定を差し出す。
 // 方針: 狭めに出す。該当が多いときは件数だけ告げる（オオカミ少年にしない）。
+//
+// 編集の経路は 2 つある。
+// - Edit / Write ツール: file_path がそのまま編集先
+// - Bash ツール: sed -i / perl -i / リダイレクト（> >>）/ tee / cp / mv で書く
+//   （自動モードでは編集を Bash で行う指示が入ることがあり、Edit / Write だけを
+//   見ていると編集直前の差し込みが一度も走らない。miroir-fe で 0 回だった）
+// Bash の側は書き込み先の取り違えを避けるため、精度を優先して狭く取る。
+// 読むだけの命令（cat / grep / sed -n）では何も出さない。
+import fs from 'node:fs'
 import path from 'node:path'
 import {
   loadDocs,
@@ -18,30 +27,44 @@ const input = await readHookInput()
 const docsDir = resolveDocsDir(input.cwd || process.cwd())
 if (!docsDir) process.exit(0)
 
-const filePath = input.tool_input?.file_path
-if (!filePath) process.exit(0)
-
 const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()
-const relPath = path.relative(projectDir, filePath)
+const cwd = input.cwd || projectDir
 const repoName = path.basename(projectDir)
-if (relPath.startsWith('..')) process.exit(0)
-
-// 編集内容（項目名での引き当てに使う）
 const ti = input.tool_input ?? {}
-const content = [ti.new_string, ti.content, ti.old_string]
-  .filter(Boolean)
-  .join('\n')
+
+// 編集先（プロジェクト内の相対パス）と、項目名での引き当てに使う本文
+let relPaths
+let content
+if (input.tool_name === 'Bash') {
+  const command = ti.command ?? ''
+  if (!command) process.exit(0)
+  relPaths = writeTargetsOf(command, { cwd, projectDir })
+  content = command
+} else {
+  const filePath = ti.file_path
+  if (!filePath) process.exit(0)
+  relPaths = [toProjectRel(filePath, { cwd, projectDir })].filter(Boolean)
+  content = [ti.new_string, ti.content, ti.old_string].filter(Boolean).join('\n')
+}
+if (!relPaths.length) process.exit(0)
 
 const docs = loadDocs(docsDir)
-const hits = matchDocs(docs, { relPath, content, repoName }).filter(
-  (d) => d.kind === 'decision',
-)
+const hitsById = new Map()
+for (const relPath of relPaths) {
+  for (const d of matchDocs(docs, { relPath, content, repoName })) {
+    if (d.kind === 'decision' && !hitsById.has(d.id)) hitsById.set(d.id, d)
+  }
+}
+const hits = [...hitsById.values()]
+
 const log = (fired, shown = []) =>
   record({
     event: 'edit',
     repo: repoName,
     session: input.session_id,
-    file: relPath,
+    via: input.tool_name === 'Bash' ? 'bash' : 'tool',
+    file: relPaths[0],
+    files: relPaths,
     fired,
     matched: hits.map((h) => h.id),
     shown,
@@ -85,3 +108,109 @@ if (fresh.length > MAX_SHOWN) {
 
 log(true, fresh.map((d) => d.id))
 emit('PreToolUse', text)
+
+/**
+ * Bash の命令文から「書き込み先」のファイルをプロジェクト内の相対パスで取り出す。
+ *
+ * 見るのは次の形だけ（精度優先。ここに無い書き方は拾わない）。
+ * - `sed -i` / `perl -i` / `perl -pi`: その区切りの中の、実在するファイルの引数
+ * - `> file` / `>> file`: リダイレクト先（`/dev/null` と `>&2` の類は除く）
+ * - `tee [-a] file...`
+ * - `cp` / `mv` の最後の引数（上書き先）
+ * 命令文は `;` `&&` `||` `|` で区切って区切りごとに見る。
+ */
+function writeTargetsOf(command, { cwd, projectDir }) {
+  const found = new Set()
+
+  // ヒアドキュメントの本文は命令ではないので、区切りに使う前に落とす
+  const withoutHeredoc = command.replace(
+    /<<-?\s*['"]?(\w+)['"]?[\s\S]*?\n\1\s*$/gm,
+    '',
+  )
+
+  // `cd <場所> && sed -i …` のように途中で移動する命令文では、以降の相対パスをその場所から解く
+  let here = cwd
+  const add = (token, { mustExist }) => {
+    const rel = toProjectRel(unquote(token), { cwd: here, projectDir })
+    if (!rel) return
+    if (mustExist && !isFile(path.join(projectDir, rel))) return
+    found.add(rel)
+  }
+
+  for (const seg of withoutHeredoc.split(/\|\||&&|;|\|/)) {
+    const tokens = tokenize(seg)
+    if (!tokens.length) continue
+    if (tokens[0] === 'cd') {
+      const to = tokens[1] ? unquote(tokens[1]) : null
+      if (to && !/[*?{}$`]/.test(to)) here = path.resolve(here, to)
+      continue
+    }
+
+    // リダイレクト先（`>` `>>`）。`2>&1` `>&2` `> /dev/null` は対象外
+    for (let i = 0; i < tokens.length; i++) {
+      const t = tokens[i]
+      const m = t.match(/^\d?(>>?)(.*)$/)
+      if (!m || m[2].startsWith('&')) continue
+      const target = m[2] || tokens[++i]
+      if (!target || target.startsWith('&') || target === '/dev/null') continue
+      add(target, { mustExist: false })
+    }
+
+    // 先頭の命令名（env・sudo・変数代入は飛ばす）
+    let head = 0
+    while (
+      head < tokens.length &&
+      /^(?:env|sudo|command|[A-Za-z_][A-Za-z0-9_]*=.*)$/.test(tokens[head])
+    )
+      head++
+    const cmd = path.basename(tokens[head] ?? '')
+    const args = tokens
+      .slice(head + 1)
+      .filter((t) => !/^\d?>>?/.test(t) && !t.startsWith('<'))
+
+    if (
+      (cmd === 'sed' || cmd === 'perl') &&
+      args.some((a) => /^-[a-zA-Z]*i|^--in-place/.test(a))
+    ) {
+      // 置換の式と実在するファイルの区別は「実在するか」で行う
+      for (const a of args) if (!a.startsWith('-')) add(a, { mustExist: true })
+    } else if (cmd === 'tee') {
+      for (const a of args) if (!a.startsWith('-')) add(a, { mustExist: false })
+    } else if (cmd === 'cp' || cmd === 'mv') {
+      const operands = args.filter((a) => !a.startsWith('-'))
+      if (operands.length >= 2)
+        add(operands[operands.length - 1], { mustExist: false })
+    }
+  }
+  return [...found]
+}
+
+/** 空白で割る。引用符の中は 1 つの語として扱う（引用符は残す） */
+function tokenize(seg) {
+  const out = []
+  const re = /'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|\S+/g
+  let m
+  while ((m = re.exec(seg))) out.push(m[0])
+  return out
+}
+
+function unquote(t) {
+  return t.replace(/^(['"])(.*)\1$/s, '$2')
+}
+
+/** プロジェクト内なら相対パス、外なら null。パスらしくない語（置換式など）も null */
+function toProjectRel(token, { cwd, projectDir }) {
+  if (!token || /[\s*?{}$`]/.test(token)) return null
+  const abs = path.isAbsolute(token) ? token : path.resolve(cwd, token)
+  const rel = path.relative(projectDir, abs)
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null
+  return rel
+}
+
+function isFile(p) {
+  try {
+    return fs.statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
