@@ -8,26 +8,71 @@ export const KINDS = ['requirements', 'usecases', 'decisions']
  * 文書ディレクトリを決める。
  * 1. プラグイン設定 docs_dir（環境変数として渡ってくる）
  * 2. プロジェクト直下の .speclink.json の docsDir
- * どちらも無ければ null（＝speclink は黙って何もしない）。
+ * 3. 作業コピー（git worktree）なら、本体チェックアウト直下の .speclink.json の docsDir
+ * どれも無ければ null（＝speclink は黙って何もしない）。
+ *
+ * 3 があるのは、作業コピーはブランチごとに切っては捨てるもので、そのたびに設定を
+ * 置く運用は必ず忘れられるから（忘れても何も言わずに止まるので気づけない）。
+ * 本体に 1 つ置けば、そこから切った作業コピー全部に効く。
  */
 export function resolveDocsDir(cwd) {
   const fromConfig = process.env.CLAUDE_PLUGIN_OPTION_DOCS_DIR
   if (fromConfig && fs.existsSync(fromConfig)) return fromConfig
 
   const projectDir = process.env.CLAUDE_PROJECT_DIR || cwd
-  const local = path.join(projectDir, '.speclink.json')
-  if (fs.existsSync(local)) {
-    try {
-      const conf = JSON.parse(fs.readFileSync(local, 'utf8'))
-      if (conf.docsDir) {
-        const resolved = path.resolve(projectDir, conf.docsDir)
-        if (fs.existsSync(resolved)) return resolved
-      }
-    } catch {
-      // 壊れた設定は無視する（speclink がプロジェクトを止めてはいけない）
+  const local = readLocalConfig(projectDir)
+  if (local) return local
+
+  const mainDir = mainCheckoutOf(projectDir)
+  if (mainDir) return readLocalConfig(mainDir)
+  return null
+}
+
+/** <dir>/.speclink.json の docsDir を <dir> 基準で解決する。無ければ null。 */
+function readLocalConfig(dir) {
+  const local = path.join(dir, '.speclink.json')
+  if (!fs.existsSync(local)) return null
+  try {
+    const conf = JSON.parse(fs.readFileSync(local, 'utf8'))
+    if (conf.docsDir) {
+      const resolved = path.resolve(dir, conf.docsDir)
+      if (fs.existsSync(resolved)) return resolved
     }
+  } catch {
+    // 壊れた設定は無視する（speclink がプロジェクトを止めてはいけない）
   }
   return null
+}
+
+/**
+ * dir が git worktree なら本体チェックアウトのパスを返す。それ以外は null。
+ * worktree の .git はディレクトリではなくファイルで、中身が
+ * "gitdir: <本体>/.git/worktrees/<名前>" になっている。git コマンドは呼ばない
+ * （フックは毎回走るので、プロセス起動のコストを避ける）。
+ */
+function mainCheckoutOf(dir) {
+  const dotGit = path.join(dir, '.git')
+  let stat
+  try {
+    stat = fs.statSync(dotGit)
+  } catch {
+    return null
+  }
+  if (!stat.isFile()) return null
+  let gitdir
+  try {
+    const m = fs.readFileSync(dotGit, 'utf8').match(/^gitdir:\s*(.+)$/m)
+    if (!m) return null
+    gitdir = path.resolve(dir, m[1].trim())
+  } catch {
+    return null
+  }
+  // .../<本体>/.git/worktrees/<名前> の形だけを作業コピーとみなす（submodule の .git/modules は対象外）
+  const parts = gitdir.split(path.sep)
+  const i = parts.lastIndexOf('worktrees')
+  if (i < 2 || parts[i - 1] !== '.git') return null
+  const mainDir = parts.slice(0, i - 1).join(path.sep) || path.sep
+  return fs.existsSync(mainDir) ? mainDir : null
 }
 
 /**
