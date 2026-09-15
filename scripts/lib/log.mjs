@@ -4,13 +4,36 @@
 // 1 行 1 件で追記するだけ（体感できる遅さは出ない）。
 // 記録するのはファイル名・文書 ID・件数だけ。コードの中身は書かない。
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { loadDocs } from './docs.mjs'
 
 const LOG_NAME = 'events.jsonl'
 
+// フック経由なら CLAUDE_PLUGIN_DATA が入る。
+// スキルの手動実行（/doc-stats 等）では入らないので、
+// フックが書き込んできた既定の置き場所（~/.claude/plugins/data/speclink*）を探す。
+function dataDir() {
+  if (process.env.CLAUDE_PLUGIN_DATA) return process.env.CLAUDE_PLUGIN_DATA
+  const base = path.join(os.homedir(), '.claude', 'plugins', 'data')
+  try {
+    const candidates = fs
+      .readdirSync(base)
+      .filter((d) => d.startsWith('speclink'))
+      .map((d) => path.join(base, d))
+    // 既に記録があるものを優先する
+    return (
+      candidates.find((d) => fs.existsSync(path.join(d, LOG_NAME))) ??
+      candidates[0] ??
+      null
+    )
+  } catch {
+    return null
+  }
+}
+
 function logFile() {
-  const dir = process.env.CLAUDE_PLUGIN_DATA
+  const dir = dataDir()
   if (!dir) return null
   try {
     fs.mkdirSync(dir, { recursive: true })
