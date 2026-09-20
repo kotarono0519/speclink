@@ -16,7 +16,13 @@ import { execFileSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { readHookInput, resolveDocsDir } from './lib/docs.mjs'
+import {
+  gitPathOf,
+  gitRootOf,
+  readHookInput,
+  resolveDocsDir,
+  resolveRepoDir,
+} from './lib/docs.mjs'
 import { record, docsSnapshot, repoOf } from './lib/log.mjs'
 
 const SELF = path.resolve(process.argv[1])
@@ -24,7 +30,14 @@ const SELF = path.resolve(process.argv[1])
 // --- 記録モード（Claude がレビュー後に自分で実行する） ---------------------
 // フックではないので標準入力は読まない（読むと環境によっては待ち続ける）。
 if (process.argv.includes('--reviewed')) {
-  const dir = process.env.CLAUDE_PROJECT_DIR || process.cwd()
+  // 対象のリポジトリは引数で受け取る。会話の起点（CLAUDE_PROJECT_DIR）は当てにしない
+  // （複数のリポジトリを収めた親フォルダから起動されていると差分が取れず、
+  //  記録できないまま同じコミットがまた止まる）。
+  const arg = process.argv[process.argv.indexOf('--reviewed') + 1]
+  const dir =
+    gitRootOf(arg && !arg.startsWith('-') ? arg : process.cwd()) ??
+    gitRootOf(process.env.CLAUDE_PROJECT_DIR ?? '') ??
+    process.cwd()
   const fp = fingerprints(dir)
   if (!fp) {
     console.log('レビュー済みとして記録できませんでした（git の差分が取れません）。')
@@ -47,7 +60,7 @@ if (/--amend|--no-edit/.test(command)) process.exit(0)
 const docsDir = resolveDocsDir(input.cwd || process.cwd())
 if (!docsDir) process.exit(0)
 
-const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()
+const projectDir = resolveRepoDir(input)
 const all = /(^|\s)(-[a-zA-Z]*a[a-zA-Z]*|--all)(\s|$)/.test(command)
 
 // レビューする値打ちのある変更があるか。文書・lock だけのコミットは通す。
@@ -127,7 +140,7 @@ const reason = [
   '',
   '### 3. 記録してコミットし直す',
   '```shell',
-  `node "${SELF}" --reviewed`,
+  `node "${SELF}" --reviewed "${projectDir}"`,
   '```',
   'を実行してから、同じコミットコマンドをもう一度実行する（この記録がある間は止めない）。',
   '',
@@ -149,7 +162,12 @@ process.exit(0)
 
 function git(dir, args) {
   try {
-    return execFileSync('git', args, { cwd: dir, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+    return execFileSync('git', args, {
+      cwd: dir,
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
   } catch {
     return null
   }
@@ -178,11 +196,9 @@ function fingerprints(dir) {
   return { staged: h(staged), working: h(staged + unstaged) }
 }
 
-/** 記録の置き場所。作業コピー（git worktree）では .git がファイルなので git に聞く */
+/** 記録の置き場所（作業コピーでも正しい場所に置く） */
 function statePath(dir) {
-  const p = git(dir, ['rev-parse', '--git-path', 'speclink-review'])
-  if (!p) return null
-  return path.resolve(dir, p.trim())
+  return gitPathOf(dir, 'speclink-review')
 }
 
 function readState(dir) {

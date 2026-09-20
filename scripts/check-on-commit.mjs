@@ -6,12 +6,13 @@
 // 止めない。警告だけ（コミットを止めると邪魔者になり、そのうち外されるため）。
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
-import path from 'node:path'
 import {
   loadDocs,
   matchDocs,
   readHookInput,
+  gitPathOf,
   resolveDocsDir,
+  resolveRepoDir,
   emit,
 } from './lib/docs.mjs'
 import { record, docsSnapshot, repoOf } from './lib/log.mjs'
@@ -27,10 +28,14 @@ if (/--amend|--no-edit/.test(command)) process.exit(0)
 const docsDir = resolveDocsDir(input.cwd || process.cwd())
 if (!docsDir) process.exit(0)
 
-const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()
+const projectDir = resolveRepoDir(input)
 const git = (args) => {
   try {
-    return execFileSync('git', args, { cwd: projectDir, encoding: 'utf8' })
+    return execFileSync('git', args, {
+      cwd: projectDir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
   } catch {
     return ''
   }
@@ -57,16 +62,16 @@ const meaningful = rows.filter((r) => !NOISE.test(r.file))
 if (!meaningful.length) process.exit(0)
 
 // 同じコミットで二度出さない（失敗して再実行するたびに出ると鬱陶しい）
-const stamp = path.join(projectDir, '.git', 'speclink-last-check')
+const stamp = gitPathOf(projectDir, 'speclink-last-check')
 const fingerprint = meaningful
   .map((r) => `${r.status}:${r.file}`)
   .sort()
   .join('\n')
 try {
-  if (fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf8') === fingerprint) {
+  if (stamp && fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf8') === fingerprint) {
     process.exit(0)
   }
-  fs.writeFileSync(stamp, fingerprint)
+  if (stamp) fs.writeFileSync(stamp, fingerprint)
 } catch {
   // 記録できなくても本題は続ける
 }

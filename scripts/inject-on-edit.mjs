@@ -16,6 +16,10 @@ import {
   matchDocs,
   readHookInput,
   resolveDocsDir,
+  resolveRepoDir,
+  stripHeredoc,
+  tokenize,
+  unquote,
   emit,
   seenFilter,
 } from './lib/docs.mjs'
@@ -27,7 +31,7 @@ const input = await readHookInput()
 const docsDir = resolveDocsDir(input.cwd || process.cwd())
 if (!docsDir) process.exit(0)
 
-const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()
+const projectDir = resolveRepoDir(input)
 const cwd = input.cwd || projectDir
 const { repo: repoName, worktree } = repoOf(projectDir)
 const ti = input.tool_input ?? {}
@@ -124,10 +128,7 @@ function writeTargetsOf(command, { cwd, projectDir }) {
   const found = new Set()
 
   // ヒアドキュメントの本文は命令ではないので、区切りに使う前に落とす
-  const withoutHeredoc = command.replace(
-    /<<-?\s*['"]?(\w+)['"]?[\s\S]*?\n\1\s*$/gm,
-    '',
-  )
+  const withoutHeredoc = stripHeredoc(command)
 
   // `cd <場所> && sed -i …` のように途中で移動する命令文では、以降の相対パスをその場所から解く
   let here = cwd
@@ -184,19 +185,6 @@ function writeTargetsOf(command, { cwd, projectDir }) {
     }
   }
   return [...found]
-}
-
-/** 空白で割る。引用符の中は 1 つの語として扱う（引用符は残す） */
-function tokenize(seg) {
-  const out = []
-  const re = /'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|\S+/g
-  let m
-  while ((m = re.exec(seg))) out.push(m[0])
-  return out
-}
-
-function unquote(t) {
-  return t.replace(/^(['"])(.*)\1$/s, '$2')
 }
 
 /** プロジェクト内なら相対パス、外なら null。パスらしくない語（置換式など）も null */

@@ -11,6 +11,7 @@ import {
   matchDocs,
   readHookInput,
   resolveDocsDir,
+  resolveRepoDir,
   emit,
 } from './lib/docs.mjs'
 import { record, docsSnapshot, repoOf } from './lib/log.mjs'
@@ -24,7 +25,7 @@ if (/--amend|--no-edit/.test(command)) process.exit(0)
 const docsDir = resolveDocsDir(input.cwd || process.cwd())
 if (!docsDir) process.exit(0)
 
-const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()
+const projectDir = resolveRepoDir(input)
 const { repo: repoName, worktree } = repoOf(projectDir)
 
 let staged = ''
@@ -32,6 +33,7 @@ try {
   staged = execFileSync('git', ['diff', '--cached', '--name-only'], {
     cwd: projectDir,
     encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
   })
 } catch {
   process.exit(0)

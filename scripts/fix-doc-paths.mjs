@@ -14,6 +14,7 @@ import {
   pathForRepo,
   readHookInput,
   resolveDocsDir,
+  resolveRepoDir,
   emit,
 } from './lib/docs.mjs'
 import { record, docsSnapshot, repoOf } from './lib/log.mjs'
@@ -26,10 +27,14 @@ if (!/\bgit\b[^|;&]*\bcommit\b/.test(command)) process.exit(0)
 const docsDir = resolveDocsDir(input.cwd || process.cwd())
 if (!docsDir) process.exit(0)
 
-const projectDir = process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()
+const projectDir = resolveRepoDir(input)
 const git = (args) => {
   try {
-    return execFileSync('git', args, { cwd: projectDir, encoding: 'utf8' })
+    return execFileSync('git', args, {
+      cwd: projectDir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
   } catch {
     return ''
   }

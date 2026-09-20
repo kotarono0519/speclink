@@ -10,7 +10,7 @@
 // 決定を「検出」する処理と違って誤りに強い。
 import fs from 'node:fs'
 import path from 'node:path'
-import { loadDocs, readHookInput, resolveDocsDir, emit } from './lib/docs.mjs'
+import { loadDocs, readHookInput, resolveDocsDir, resolveRepoDir, emit } from './lib/docs.mjs'
 import { record, docsSnapshot, repoOf } from './lib/log.mjs'
 
 const MAX_SHOWN = 3
@@ -124,7 +124,7 @@ function saveSeen(sessionId, seen, ids) {
 function logResult(fired, shownIds) {
   record({
     event: 'recall',
-    ...repoOf(process.env.CLAUDE_PROJECT_DIR ?? input.cwd ?? ''),
+    ...repoOf(resolveRepoDir(input)),
     session: input.session_id,
     fired,
     candidates: scored.length,

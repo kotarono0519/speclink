@@ -1,4 +1,5 @@
 // speclink の共通処理。外部依存なしで動かす（プラグインに node_modules を持たせない）。
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -73,6 +74,152 @@ export function mainCheckoutOf(dir) {
   if (i < 2 || parts[i - 1] !== '.git') return null
   const mainDir = parts.slice(0, i - 1).join(path.sep) || path.sep
   return fs.existsSync(mainDir) ? mainDir : null
+}
+
+/**
+ * dir から上へ辿って、リポジトリの根（.git があるところ）を返す。無ければ null。
+ * 作業コピー（git worktree）の .git はファイルだが、あることに変わりはないので同じ扱い。
+ */
+export function gitRootOf(dir) {
+  let cur = dir ? path.resolve(dir) : ''
+  while (cur) {
+    if (fs.existsSync(path.join(cur, '.git'))) return cur
+    const up = path.dirname(cur)
+    if (up === cur) return null
+    cur = up
+  }
+  return null
+}
+
+/**
+ * いま触っているリポジトリの根を決める。
+ *
+ * 会話の起点（CLAUDE_PROJECT_DIR）を当てにしない。複数のリポジトリを収めた親フォルダから
+ * 起動されると、そこには .git が無いので変更一覧が空で返り、フックが何も言わずに素通りする
+ * （実測: 親フォルダ起動の 30 コミットで、コミット前の関所が 1 回も動かなかった）。
+ * 文書側の指し先も「リポジトリ名/パス」で書かれているので、名前を取り違えると照合も全部外れる。
+ *
+ * 手がかりの優先順: 命令文の行き先（git -C / cd）→ 編集先のファイル → いまいる場所 → 起点。
+ * どれも .git に辿り着かなければ、従来どおり起点を返す。
+ */
+export function resolveRepoDir(input = {}) {
+  const cwd = input.cwd || process.cwd()
+  const base = process.env.CLAUDE_PROJECT_DIR || cwd
+  const ti = input.tool_input ?? {}
+  const candidates = []
+  if (ti.command) {
+    const target = commandTargetDir(ti.command, cwd)
+    if (target) candidates.push(target)
+  }
+  if (ti.file_path) candidates.push(path.dirname(path.resolve(cwd, ti.file_path)))
+  candidates.push(cwd, base)
+  for (const c of candidates) {
+    const root = c ? gitRootOf(c) : null
+    // 会話の持ち場（起点）と関係しないリポジトリは対象にしない。
+    // 命令文の行き先をそのまま信じると、よそのリポジトリのコミットを掴んで止め、
+    // 相手の .git に記録まで書いてしまう（別のプロジェクトを巻き込む）。
+    if (root && (within(root, base) || within(base, root))) return root
+  }
+  return gitRootOf(base) ?? base
+}
+
+/** a が b の中（または b そのもの）か */
+function within(a, b) {
+  if (!a || !b) return false
+  const rel = path.relative(b, a)
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel))
+}
+
+/**
+ * 命令文が「どこで」走るかを読む。`git -C <場所>` が最優先で、無ければ `cd` で
+ * 移動した先（最後に落ち着いた場所）。移動が無ければ null（＝いまいる場所のまま）。
+ */
+export function commandTargetDir(command, cwd) {
+  const segments = stripHeredoc(command).split(/\|\||&&|;|\|/)
+  let here = cwd
+  let moved = false
+  let lastC = null // 最後に見た `git -C`
+  let commitC = null // コミットする区切りの `git -C`（これが最優先）
+  for (const seg of segments) {
+    const tokens = tokenize(seg)
+    if (!tokens.length) continue
+    if (tokens[0] === 'cd') {
+      const to = tokens[1] ? unquote(tokens[1]) : null
+      if (to && !/[*?{}$`]/.test(to)) {
+        here = path.resolve(here, to)
+        moved = true
+      }
+      continue
+    }
+    const i = tokens.indexOf('-C')
+    if (path.basename(unquote(tokens[0])) === 'git' && i > 0 && tokens[i + 1]) {
+      const to = unquote(tokens[i + 1])
+      if (!/[*?{}$`]/.test(to)) {
+        const abs = path.resolve(here, to)
+        lastC = abs
+        // `git -C 別の場所 log | …; cd こっち && git commit` のように、下調べで別の場所を
+        // 指しているだけのことがある。コミットする区切りのものだけを別格に扱う。
+        if (commitC === null && tokens.includes('commit')) commitC = abs
+      }
+    }
+  }
+  if (commitC) return commitC
+  if (moved) return here
+  if (lastC) return lastC
+
+  // 移動も -C も無いなら、命令文に出てくる実在のパスから場所を推す。
+  // 自動モードでは `sed -i <絶対パス>` や `cat > <絶対パス>` のように、その場から
+  // 動かずに他のリポジトリのファイルを書くことが多い（ここを見ないと親フォルダのままになる）。
+  for (const seg of segments) {
+    for (const token of tokenize(seg)) {
+      const u = unquote(token)
+      if (!u.includes('/') || /[*?{}$`<>]/.test(u) || u.startsWith('-')) continue
+      const abs = path.resolve(here, u)
+      let stat
+      try {
+        stat = fs.statSync(abs)
+      } catch {
+        continue
+      }
+      return stat.isDirectory() ? abs : path.dirname(abs)
+    }
+  }
+  return null
+}
+
+/**
+ * git の管理領域の中のファイルの置き場所。作業コピー（git worktree）では .git が
+ * ファイルなので、自前で組み立てず git に聞く。取れなければ null。
+ */
+export function gitPathOf(dir, name) {
+  try {
+    const out = execFileSync('git', ['rev-parse', '--git-path', name], {
+      cwd: dir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    return out ? path.resolve(dir, out) : null
+  } catch {
+    return null
+  }
+}
+
+/** ヒアドキュメントの本文は命令ではないので落とす（コミットメッセージを読み違えない） */
+export function stripHeredoc(command) {
+  return command.replace(/<<-?\s*['"]?(\w+)['"]?[\s\S]*?\n\1\s*$/gm, '')
+}
+
+/** 空白で割る。引用符の中は 1 つの語として扱う（引用符は残す） */
+export function tokenize(seg) {
+  const out = []
+  const re = /'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|\S+/g
+  let m
+  while ((m = re.exec(seg))) out.push(m[0])
+  return out
+}
+
+export function unquote(t) {
+  return t.replace(/^(['"])(.*)\1$/s, '$2')
 }
 
 /**

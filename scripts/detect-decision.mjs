@@ -8,7 +8,7 @@
 // 選ばれなかった選択肢がそのまま「却下した案」になる。理由を聞き直す必要がない。
 import fs from 'node:fs'
 import path from 'node:path'
-import { readHookInput, resolveDocsDir, emit } from './lib/docs.mjs'
+import { readHookInput, resolveDocsDir, resolveRepoDir, emit } from './lib/docs.mjs'
 import { record, docsSnapshot, repoOf } from './lib/log.mjs'
 
 const input = await readHookInput()
@@ -38,7 +38,7 @@ if (dataDir && input.session_id) {
 
 record({
   event: 'decision',
-  ...repoOf(process.env.CLAUDE_PROJECT_DIR ?? input.cwd ?? ''),
+  ...repoOf(resolveRepoDir(input)),
   session: input.session_id,
   fired: true,
   tool,
