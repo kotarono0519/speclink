@@ -4,6 +4,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { KINDS } from './lib/docs.mjs'
+import { installHooks, reportHooks } from './install-hooks.mjs'
 
 const docsDir = path.resolve(process.argv[2] || '')
 const projectDir = path.resolve(
@@ -73,3 +74,11 @@ console.log(
     : 'すべて既にありました。',
 )
 console.log(`文書ディレクトリ: ${docsDir}`)
+
+// speclink が自動で働くための登録。失敗しても立ち上げは止めない（文書置き場はもうできている）。
+try {
+  reportHooks(installHooks())
+} catch (error) {
+  console.error(`フックの登録は見送りました: ${error.message}`)
+  console.error('  あとで node scripts/install-hooks.mjs を実行すると登録できます。')
+}
