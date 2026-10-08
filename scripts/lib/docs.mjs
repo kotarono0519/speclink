@@ -314,6 +314,35 @@ export function addsBeforeCommit(command, cwd) {
 }
 
 /**
+ * 指し先のファイルが無い文書を拾う。
+ * - gone … 親フォルダはあるのにファイルが無い（消えた・改名された疑い。名指しして直させる）
+ * - notYet … 親フォルダごと無い（まだ作っていない場所を指す先行設計。正常なので数えるだけ）
+ * glob（* ?）を含む指し先と、別のリポジトリを指す文書は判定しない。
+ * コミット時の点検（fix-doc-paths）と会話開始の案内（inject-on-session）が同じ判定を使う。
+ * @param {object[]} docs loadDocs の結果（status は呼び出し側で絞る）
+ * @param {string} projectDir 判定するリポジトリの場所
+ * @param {string|null} repoName そのリポジトリ名（pathForRepo に渡す）
+ * @param {(p: string) => boolean} [skip] 判定から外す指し先（このコミットで止める分など）
+ * @returns {{ gone: { id: string, path: string, file: string }[], notYet: number }}
+ */
+export function missingDocPaths(docs, projectDir, repoName, skip = () => false) {
+  const gone = []
+  let notYet = 0
+  for (const doc of docs) {
+    for (const p of doc.paths) {
+      if (/[*?]/.test(p) || skip(p)) continue
+      const rel = pathForRepo(p, repoName)
+      if (rel === null) continue
+      const abs = path.join(projectDir, rel)
+      if (fs.existsSync(abs)) continue
+      if (fs.existsSync(path.dirname(abs))) gone.push({ id: doc.id, path: p, file: doc.file })
+      else notYet++
+    }
+  }
+  return { gone, notYet }
+}
+
+/**
  * git の管理領域の中のファイルの置き場所。作業コピー（git worktree）では .git が
  * ファイルなので、自前で組み立てず git に聞く。取れなければ null。
  */
