@@ -91,6 +91,20 @@ if (tooBroad.length) {
   )
 }
 
+// 同じ項目名を 3 文書以上が鍵にしていたら警告する。画面をまたいで出る名前（識別子・住所・氏名など）は
+// 決定を識別しないので、それを含むファイルを触るたびに関係ない決定がまとめて出る
+// （miroir-fe の実測: reservedAt を 9 文書が鍵にし、予約まわりの編集 1 回で最大 23 件が出た）。
+const byField = new Map()
+for (const d of docs.filter((d) => d.status === 'active'))
+  for (const f of d.fields) byField.set(f, [...(byField.get(f) ?? []), d.id])
+const shared = [...byField].filter(([, ids]) => ids.length >= 3)
+if (shared.length) {
+  console.warn(
+    '同じ項目名を 3 文書以上が鍵にしています（関係ない決定まで出る原因。決定に固有の名前か場所に置き換える）:\n' +
+      shared.map(([f, ids]) => `  ${f}: ${ids.join(', ')}`).join('\n'),
+  )
+}
+
 console.log(
   `索引を更新しました: 要件 ${byKind.requirements.length} / ユースケース ${byKind.usecases.length} / 決定 ${byKind.decisions.length}`,
 )
