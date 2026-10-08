@@ -4,13 +4,13 @@
 // 役割分担: 機械は「安い手がかり」で一次選別だけを行い、
 //           設計判断を含むかどうかの最終判断は Claude にさせる。
 // 止めない。警告だけ（コミットを止めると邪魔者になり、そのうち外されるため）。
-import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import {
   loadDocs,
   matchDocs,
   readHookInput,
   gitPathOf,
+  pendingCommitGit,
   resolveDocsDir,
   resolveRepoDir,
   emit,
@@ -29,17 +29,10 @@ const docsDir = resolveDocsDir(input.cwd || process.cwd())
 if (!docsDir) process.exit(0)
 
 const projectDir = resolveRepoDir(input)
-const git = (args) => {
-  try {
-    return execFileSync('git', args, {
-      cwd: projectDir,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    })
-  } catch {
-    return ''
-  }
-}
+// 命令文の中の `git add` まで済ませた状態で見る（済ませる前だと差分が空で素通りする）
+const view = pendingCommitGit(projectDir, command, input.cwd || process.cwd())
+process.on('exit', view.cleanup)
+const git = (args) => view.git(args) ?? ''
 
 // コミット対象のファイル。-a 付きなら未ステージの変更も含む
 const staged = git(['diff', '--cached', '--name-status'])

@@ -4,11 +4,11 @@
 // 人はコマンドを打たない。打たれない道具は腐るので、コミットを起点に自動で動かす。
 // ここが見るのは「既に溜まっている文書と、今の変更が食い違っていないか」だけ。
 // 「これから何を残すか」は check-on-commit.mjs（コミット前の確認）の担当で、重複させない。
-import { execFileSync } from 'node:child_process'
 import path from 'node:path'
 import {
   loadDocs,
   matchDocs,
+  pendingCommitGit,
   readHookInput,
   resolveDocsDir,
   resolveRepoDir,
@@ -28,16 +28,11 @@ if (!docsDir) process.exit(0)
 const projectDir = resolveRepoDir(input)
 const { repo: repoName, worktree } = repoOf(projectDir)
 
-let staged = ''
-try {
-  staged = execFileSync('git', ['diff', '--cached', '--name-only'], {
-    cwd: projectDir,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'ignore'],
-  })
-} catch {
-  process.exit(0)
-}
+// 命令文の中の `git add` まで済ませた状態で見る（済ませる前だと差分が空で素通りする）
+const view = pendingCommitGit(projectDir, command, input.cwd || process.cwd())
+process.on('exit', view.cleanup)
+const staged = view.git(['diff', '--cached', '--name-only'])
+if (staged === null) process.exit(0)
 const files = staged.split('\n').filter(Boolean)
 if (!files.length) process.exit(0)
 

@@ -19,6 +19,7 @@ import path from 'node:path'
 import {
   gitPathOf,
   gitRootOf,
+  pendingCommitGit,
   readHookInput,
   resolveDocsDir,
   resolveRepoDir,
@@ -38,12 +39,12 @@ if (process.argv.includes('--reviewed')) {
     gitRootOf(arg && !arg.startsWith('-') ? arg : process.cwd()) ??
     gitRootOf(process.env.CLAUDE_PROJECT_DIR ?? '') ??
     process.cwd()
-  const fp = fingerprints(dir)
+  const fp = fingerprints((args) => git(dir, args))
   if (!fp) {
     console.log('レビュー済みとして記録できませんでした（git の差分が取れません）。')
     process.exit(0)
   }
-  writeState(dir, { ...fp, reviewed: true, denials: 0 })
+  writeState(dir, { ...fp, reviewed: true, denials: 0, at: Date.now() })
   console.log('コミット前レビューを済みとして記録しました。そのままコミットできます。')
   process.exit(0)
 }
@@ -63,18 +64,31 @@ if (!docsDir) process.exit(0)
 const projectDir = resolveRepoDir(input)
 const all = /(^|\s)(-[a-zA-Z]*a[a-zA-Z]*|--all)(\s|$)/.test(command)
 
+// 命令文の中の `git add` まで済ませた状態で見る（済ませる前だと差分が空で素通りする）
+const view = pendingCommitGit(projectDir, command, input.cwd || process.cwd())
+process.on('exit', view.cleanup)
+
 // レビューする値打ちのある変更があるか。文書・lock だけのコミットは通す。
-const files = changedFiles(projectDir, all)
+const files = changedFiles(view.git, all)
 const NOISE =
   /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$|\.(md|txt|snap|lock)$|(^|\/)\.(github|vscode)\//
 const meaningful = files.filter((f) => !NOISE.test(f))
 if (!meaningful.length) process.exit(0)
 
-const fp = fingerprints(projectDir)
+const fp = fingerprints(view.git)
 if (!fp) process.exit(0)
 const mine = all ? fp.working : fp.staged
 const state = readState(projectDir)
-const same = state && (all ? state.working : state.staged) === mine
+// 記録（--reviewed）は本物の索引で指紋を取る。登録をつないだ命令文（git add … && git commit）では
+// こちらは登録後の写しで取るので、登録前に記録されていると staged どうしは一致しない。その場合、
+// 写しの登録後の差分は作業コピー全体の差分と同じになるので、記録側の working とも突き合わせる
+const same =
+  Boolean(state) &&
+  ((all ? state.working : state.staged) === mine || (view.adds > 0 && state.working === mine))
+// 指紋が合わなくても、直前の記録が 10 分以内なら「同じコミットをやり直している」とみなして回数を
+// 引き継ぐ（登録の手順を飛ばされると指紋が毎回ずれ、2 回で諦める安全弁に一生届かないため）
+const recent = Boolean(state) && Date.now() - (state.at ?? 0) < 10 * 60 * 1000
+const priorDenials = same || recent ? (state.denials ?? 0) : 0
 
 const { repo: repoName, worktree } = repoOf(projectDir)
 const log = (fired, note) =>
@@ -97,7 +111,7 @@ if (same && state.reviewed) {
 }
 
 // 同じ内容で 2 回止めたら、それ以上は止めない（作業が詰むのを避ける）
-if (same && (state.denials ?? 0) >= 2) {
+if (priorDenials >= 2) {
   clearState(projectDir)
   log(false, 'gave-up')
   process.stdout.write(
@@ -116,7 +130,8 @@ if (same && (state.denials ?? 0) >= 2) {
 writeState(projectDir, {
   ...fp,
   reviewed: false,
-  denials: same ? (state.denials ?? 0) + 1 : 1,
+  denials: priorDenials + 1,
+  at: Date.now(),
 })
 log(true)
 
@@ -124,6 +139,14 @@ const target = all ? 'git diff HEAD' : 'git diff --cached'
 const reason = [
   'コミット前レビュー（speclink）。**このコミットはいったん止めました。** 下の手順でレビューしてから入れてください。',
   '',
+  ...(view.adds
+    ? [
+        '### 0. 先に登録だけ済ませる',
+        'この命令文は登録（`git add`）とコミットをつないでいる。止めたので登録もまだ走っていない。',
+        '**`git add` の部分だけを単独で先に実行する**（レビューする差分と、記録の指紋がそれで揃う）。',
+        '',
+      ]
+    : []),
   '### 1. レビューする',
   `Agent ツールでサブエージェント（general-purpose）を 1 つ起動し、\`${target}\`（これから入る差分）とコミットメッセージ案を次の観点でレビューさせる:`,
   '',
@@ -174,9 +197,9 @@ function git(dir, args) {
 }
 
 /** コミット対象のファイル名。-a 付きなら未ステージの変更も含む */
-function changedFiles(dir, all) {
-  const out = [git(dir, ['diff', '--cached', '--name-only'])]
-  if (all) out.push(git(dir, ['diff', '--name-only']))
+function changedFiles(run, all) {
+  const out = [run(['diff', '--cached', '--name-only'])]
+  if (all) out.push(run(['diff', '--name-only']))
   return out
     .filter(Boolean)
     .join('\n')
@@ -188,10 +211,10 @@ function changedFiles(dir, all) {
  * 差分の中身から指紋を作る。ファイル名だけだと、レビュー後に中身を直しても
  * 同じ指紋になり「レビュー済み」のまま通ってしまうため、中身で取る。
  */
-function fingerprints(dir) {
-  const staged = git(dir, ['diff', '--cached'])
+function fingerprints(run) {
+  const staged = run(['diff', '--cached'])
   if (staged === null) return null
-  const unstaged = git(dir, ['diff']) ?? ''
+  const unstaged = run(['diff']) ?? ''
   const h = (s) => crypto.createHash('sha256').update(s).digest('hex').slice(0, 16)
   return { staged: h(staged), working: h(staged + unstaged) }
 }

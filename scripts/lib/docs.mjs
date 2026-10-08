@@ -1,6 +1,7 @@
 // speclink の共通処理。外部依存なしで動かす（プラグインに node_modules を持たせない）。
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 export const KINDS = ['requirements', 'usecases', 'decisions']
@@ -185,6 +186,131 @@ export function commandTargetDir(command, cwd) {
     }
   }
   return null
+}
+
+/**
+ * コミットの命令文が走り終えたときに入る中身を、コミット前の時点で見るための git 呼び出しを返す。
+ *
+ * `git add a b && git commit -m ...` のように登録とコミットを 1 つの命令文でつなぐと、
+ * フックが走る時点ではまだ何も登録されていない。登録済みの差分だけを見ると「中身が空」になり、
+ * コミット時の関所が全部そろって何も言わずに素通りする（実測: 作業コピーでの 1 コミットで
+ * レビュー・文書の確認・決定との照合の 3 つが 1 回も動かなかった）。
+ *
+ * そこで命令文のうちコミットより前にある `git add` / `git rm` / `git mv` を、登録状態の写し
+ * （一時ファイル）の上で先に実行し、その写しを見る。本物の登録状態には触らない。
+ * 使い終えたら cleanup() を呼ぶ。登録が無ければ写しは作らず、普段どおりの git を返す。
+ *
+ * @returns {{ git: (args: string[]) => string | null, adds: number, cleanup: () => void }}
+ */
+export function pendingCommitGit(dir, command, cwd = dir) {
+  let env = process.env
+  let tmp = null
+  const adds = addsBeforeCommit(command, cwd)
+  if (adds.length) {
+    const real = gitPathOf(dir, 'index')
+    tmp = path.join(os.tmpdir(), `speclink-index-${process.pid}-${Date.now()}`)
+    try {
+      if (real && fs.existsSync(real)) fs.copyFileSync(real, tmp)
+      env = { ...process.env, GIT_INDEX_FILE: tmp }
+      for (const { at, sub, args } of adds) {
+        // 別のリポジトリ（dir の外）への操作は、この索引の写しとは無関係なので流し込まない
+        if (path.relative(dir, at).startsWith('..')) continue
+        const run = (gitArgs) =>
+          execFileSync('git', gitArgs, {
+            cwd: at,
+            env,
+            encoding: 'utf8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+            timeout: 10000,
+          })
+        try {
+          // 写しの中だけで再現する。本物の作業コピーのファイルには触らない
+          // （素の `git rm` / `git mv` は作業コピーのファイルも消す・動かすので、そのまま流すと
+          //   止めたはずのコミットの前にファイルが消える）
+          if (sub === 'rm') {
+            run(['rm', '--cached', '-q', ...args.filter((t) => t !== '--cached')])
+          } else if (sub === 'mv') {
+            const operands = args.filter((t) => !t.startsWith('-'))
+            if (operands.length !== 2) continue // 複数ファイルをフォルダへ動かす形は再現しない
+            const [from, to] = operands
+            const entry = run(['ls-files', '-s', '--', from]).trim().split(/\s+/)
+            if (entry.length < 4) continue
+            const [mode, blob] = entry
+            run(['rm', '--cached', '-q', '--', from])
+            run(['update-index', '--add', '--cacheinfo', `${mode},${blob},${to}`])
+          } else {
+            run(['add', ...args])
+          }
+        } catch {
+          // 登録に失敗する指定（存在しないパスなど）は本番でも失敗するので、写しにも入れない
+        }
+      }
+    } catch {
+      env = process.env
+    }
+  }
+  const git = (args) => {
+    try {
+      return execFileSync('git', args, {
+        cwd: dir,
+        env,
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+        stdio: ['ignore', 'pipe', 'ignore'],
+      })
+    } catch {
+      return null
+    }
+  }
+  const cleanup = () => {
+    if (tmp) fs.rmSync(tmp, { force: true })
+  }
+  return { git, adds: adds.length, cleanup }
+}
+
+/**
+ * 命令文の中で、コミットより前にある登録の操作（`git add` / `git rm` / `git mv`）を拾う。
+ * `git rm old.ts && git commit` は 1 行で消すいちばん自然な形なので、add だけでは消す操作が見えない。
+ * 対話で選ぶ登録（-p / -i / -e）と、展開しないと中身が分からない指定（$ や `）は飛ばす。
+ * @returns {{ at: string, sub: string, args: string[] }[]} at はその操作が走る場所、sub は add / rm / mv
+ */
+const REPLAY_SUBCOMMANDS = new Set(['add', 'rm', 'mv'])
+export function addsBeforeCommit(command, cwd) {
+  const out = []
+  let here = cwd
+  for (const seg of stripHeredoc(command).split(/\|\||&&|;|\|/)) {
+    const tokens = tokenize(seg).map(unquote)
+    if (!tokens.length) continue
+    if (tokens[0] === 'cd') {
+      if (tokens[1] && !/[*?{}$`]/.test(tokens[1])) here = path.resolve(here, tokens[1])
+      continue
+    }
+    if (path.basename(tokens[0]) !== 'git') continue
+    let i = 1
+    let at = here
+    while (tokens[i] === '-C' && tokens[i + 1]) {
+      at = path.resolve(at, tokens[i + 1])
+      i += 2
+    }
+    if (tokens[i] === 'commit') break
+    const sub = tokens[i]
+    if (!REPLAY_SUBCOMMANDS.has(sub)) continue
+    // リダイレクト（`> /dev/null` `2>&1`）は引数ではない。記号だけのトークンは次の 1 つ（宛先）も飛ばす
+    const args = []
+    const rest = tokens.slice(i + 1)
+    for (let j = 0; j < rest.length; j++) {
+      const t = rest[j]
+      if (/^\d*[<>]+$/.test(t)) {
+        j++
+        continue
+      }
+      if (/^\d*[<>]/.test(t)) continue
+      args.push(t)
+    }
+    if (args.some((t) => /[$`]/.test(t) || /^(-p|-i|-e|--patch|--interactive|--edit)$/.test(t))) continue
+    out.push({ at, sub, args })
+  }
+  return out
 }
 
 /**
