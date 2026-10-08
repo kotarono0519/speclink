@@ -52,6 +52,31 @@ if (input.tool_name === 'Bash') {
 }
 if (!relPaths.length) process.exit(0)
 
+// テストコードには出さない。テストの fixture は本番の項目名を一式持つので、
+// 項目名での引き当てが「その画面に効く決定」ではなく「その項目名を含む決定」を
+// まとめて拾ってしまう（miroir-fe の実測: テスト編集 116 回のうち 62 回で発火、
+// 平均 6.0 件。本体の編集は平均 3.9 件）。設計判断の対象はテストではなく本体なので、
+// テストだけを触る編集では何も出さない。
+const nonTest = relPaths.filter((p) => !isTestPath(p))
+if (!nonTest.length) {
+  record({
+    event: 'edit',
+    repo: repoName,
+    worktree,
+    session: input.session_id,
+    via: input.tool_name === 'Bash' ? 'bash' : 'tool',
+    file: relPaths[0],
+    files: relPaths,
+    fired: false,
+    matched: [],
+    shown: [],
+    note: 'test',
+    docs: docsSnapshot(docsDir),
+  })
+  process.exit(0)
+}
+relPaths = nonTest
+
 const docs = loadDocs(docsDir)
 const hitsById = new Map()
 for (const relPath of relPaths) {
@@ -202,4 +227,18 @@ function isFile(p) {
   } catch {
     return false
   }
+}
+
+/**
+ * テストコードか。ファイル名とディレクトリ名の慣習で判定する（中身は見ない）。
+ * - 名前: JS/TS の `*.test.*` / `*.spec.*`、`*_test.go`、`test_*.py` / `*_test.py` / `conftest.py`
+ * - 場所: `test` `tests` `__tests__` `__mocks__` `e2e` `fixtures` のいずれかのディレクトリ配下
+ */
+function isTestPath(rel) {
+  const base = path.basename(rel)
+  if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(base)) return true
+  if (/_test\.go$/.test(base)) return true
+  if (/^test_.*\.py$|_test\.py$|^conftest\.py$/.test(base)) return true
+  const dirs = rel.split('/').slice(0, -1)
+  return dirs.some((d) => /^(test|tests|__tests__|__mocks__|e2e|fixtures)$/.test(d))
 }
