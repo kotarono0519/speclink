@@ -42,7 +42,7 @@ if (!fs.existsSync(readme)) {
 | \`decisions/\` | なぜその作りにしたか（却下案と理由） |
 
 - 一覧は [llms.txt](llms.txt)。**自動生成なので手で編集しない。**
-- 新しく決めたことは \`/doc-new\` で残す。
+- 新しく決めたことは、決めたことを残す手順（speclink の \`doc-new\` スキル）で Claude が残す。人に聞かずに書く。
 - 変更と文書のズレは \`/doc-sync\` で確認する。
 - 書き方の規約は speclink の \`reference/format.md\`。
 
