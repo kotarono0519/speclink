@@ -136,7 +136,7 @@ function within(a, b) {
  * 移動した先（最後に落ち着いた場所）。移動が無ければ null（＝いまいる場所のまま）。
  */
 export function commandTargetDir(command, cwd) {
-  const segments = stripHeredoc(command).split(/\|\||&&|;|\|/)
+  const segments = splitCommands(stripHeredoc(command))
   let here = cwd
   let moved = false
   let lastC = null // 最後に見た `git -C`
@@ -278,7 +278,7 @@ const REPLAY_SUBCOMMANDS = new Set(['add', 'rm', 'mv'])
 export function addsBeforeCommit(command, cwd) {
   const out = []
   let here = cwd
-  for (const seg of stripHeredoc(command).split(/\|\||&&|;|\|/)) {
+  for (const seg of splitCommands(stripHeredoc(command))) {
     const tokens = tokenize(seg).map(unquote)
     if (!tokens.length) continue
     if (tokens[0] === 'cd') {
@@ -362,6 +362,51 @@ export function gitPathOf(dir, name) {
 /** ヒアドキュメントの本文は命令ではないので落とす（コミットメッセージを読み違えない） */
 export function stripHeredoc(command) {
   return command.replace(/<<-?\s*['"]?(\w+)['"]?[\s\S]*?\n\1\s*$/gm, '')
+}
+
+/**
+ * 命令文を 1 つずつの命令に割る（`&&` `||` `;` `|` と改行）。引用符の中と、行末の `\` で
+ * 続けた改行では割らない。改行で割らないと `git add …` の次の行の `git commit` まで
+ * add の引数に読まれ、登録が失敗してレビューが素通りしていた（2026-10-15）。
+ */
+export function splitCommands(command) {
+  const out = []
+  let cur = ''
+  let quote = null
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]
+    if (quote) {
+      cur += c
+      if (c === '\\' && quote === '"' && i + 1 < command.length) cur += command[++i]
+      else if (c === quote) quote = null
+      continue
+    }
+    if (c === "'" || c === '"') {
+      quote = c
+      cur += c
+      continue
+    }
+    if (c === '\\' && command[i + 1] === '\n') {
+      cur += ' '
+      i++
+      continue
+    }
+    const two = command.slice(i, i + 2)
+    if (two === '&&' || two === '||') {
+      out.push(cur)
+      cur = ''
+      i++
+      continue
+    }
+    if (c === ';' || c === '|' || c === '\n') {
+      out.push(cur)
+      cur = ''
+      continue
+    }
+    cur += c
+  }
+  out.push(cur)
+  return out
 }
 
 /** 空白で割る。引用符の中は 1 つの語として扱う（引用符は残す） */

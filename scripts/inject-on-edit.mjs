@@ -17,6 +17,7 @@ import {
   readHookInput,
   resolveDocsDir,
   resolveRepoDir,
+  splitCommands,
   stripHeredoc,
   tokenize,
   unquote,
@@ -164,7 +165,7 @@ function writeTargetsOf(command, { cwd, projectDir }) {
     found.add(rel)
   }
 
-  for (const seg of withoutHeredoc.split(/\|\||&&|;|\|/)) {
+  for (const seg of splitCommands(withoutHeredoc)) {
     const tokens = tokenize(seg)
     if (!tokens.length) continue
     if (tokens[0] === 'cd') {
