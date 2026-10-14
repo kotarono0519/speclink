@@ -12,7 +12,7 @@ import {
   emit,
 } from './lib/docs.mjs'
 import { repoOf } from './lib/log.mjs'
-import { pullDocs } from './sync-docs.mjs'
+import { pendingDocsChanges, pullDocs } from './sync-docs.mjs'
 
 const input = await readHookInput()
 const docsDir = resolveDocsDir(input.cwd || process.cwd())
@@ -23,6 +23,16 @@ if (!docsDir) process.exit(0)
 const pulled = pullDocs(docsDir, 5000)
 const pullLine = pulled.done && !pulled.ok
   ? `文書置き場の取り込みに失敗した（手元の記録のまま読む）: ${pulled.message.split('\n')[0]}\n`
+  : ''
+
+// 書いた会話がコミット前に終わると、記録は誰にも拾われずに残り、もう一方のPCから見えない。
+// フック自身はコミットしない（コミット前のレビューの関所を素通りするため）。Claude に入れさせる。
+const pending = pendingDocsChanges(docsDir)
+const shown = pending.slice(0, 5).join(' / ') + (pending.length > 5 ? ` ほか ${pending.length - 5} 件` : '')
+const pendingLine = pending.length
+  ? `文書置き場に未コミットの記録が ${pending.length} 件ある（別の会話の書き残し）: ${shown}。` +
+    `中身を一読して壊れていなければ、確認を取らずにコミットして push すること` +
+    `（決めたことを残す手順の 6 と同じ。登録するのは記録と自動生成の索引だけ）。\n`
   : ''
 
 const docs = loadDocs(docsDir).filter((d) => d.status === 'active')
@@ -45,5 +55,6 @@ emit(
     `設計・仕様の判断を始める前にこの索引を読み、関係する文書だけを開くこと。\n` +
     `新しく決めたことは、決めたことを残す手順（speclink の doc-new スキル）で残すこと。人に聞かずに書く。\n` +
     goneLine +
-    pullLine,
+    pullLine +
+    pendingLine,
 )

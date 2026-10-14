@@ -34,6 +34,14 @@ export function pullDocs(docsDir, timeout = 5000) {
   return { done: true, ok: r.ok, message: r.ok ? '' : r.out || '時間切れ' }
 }
 
+// 未コミットの変更（書いた会話がコミット前に終わった書き残し）のパス一覧。対象外・失敗なら空
+export function pendingDocsChanges(docsDir) {
+  if (!isStandaloneRemoteRepo(docsDir)) return []
+  const r = git(docsDir, ['status', '--porcelain'], 3000)
+  if (!r.ok || !r.out) return []
+  return r.out.split('\n').map((l) => l.trim().replace(/^\S+\s+/, '')).filter(Boolean)
+}
+
 export function pushDocs(docsDir, timeout = 20000) {
   if (!isStandaloneRemoteRepo(docsDir)) return { done: false, ok: true, message: '' }
   let r = git(docsDir, ['push', '--quiet'], timeout)
