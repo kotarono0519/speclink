@@ -17,6 +17,8 @@ import {
   readHookInput,
   resolveDocsDir,
   resolveRepoDir,
+  isCommitCommand,
+  commandTargetsForeignRepo,
   emit,
 } from './lib/docs.mjs'
 import { record, docsSnapshot, repoOf } from './lib/log.mjs'
@@ -24,7 +26,9 @@ import { record, docsSnapshot, repoOf } from './lib/log.mjs'
 const input = await readHookInput()
 
 const command = input.tool_input?.command ?? ''
-if (!/\bgit\b[^|;&]*\bcommit\b/.test(command)) process.exit(0)
+if (!isCommitCommand(command)) process.exit(0)
+// cd / git -C で持ち場と関係しない別のリポジトリへ移ってからのコミットは対象外
+if (commandTargetsForeignRepo(input)) process.exit(0)
 
 const docsDir = resolveDocsDir(input.cwd || process.cwd())
 if (!docsDir) process.exit(0)

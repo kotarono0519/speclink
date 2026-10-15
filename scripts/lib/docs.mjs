@@ -93,6 +93,44 @@ export function gitRootOf(dir) {
 }
 
 /**
+ * 命令文が本当に `git commit` を走らせるか。区切った命令ごとに先頭が git で、オプションの次が
+ * commit のものだけを数える。命令文全体を正規表現で見ると、ヒアドキュメントや引用符の中の
+ * 「git commit」という文字だけで反応し、コミットしない命令まで止めていた（2026-10-15）。
+ */
+export function isCommitCommand(command) {
+  for (const seg of splitCommands(stripHeredoc(command))) {
+    const tokens = tokenize(seg).map(unquote)
+    let i = 0
+    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++ // 先頭の環境変数の指定
+    if (i >= tokens.length || path.basename(tokens[i]) !== 'git') continue
+    i++
+    while (i < tokens.length && tokens[i].startsWith('-')) {
+      i += ['-C', '-c', '--git-dir', '--work-tree'].includes(tokens[i]) ? 2 : 1
+    }
+    if (tokens[i] === 'commit') return true
+  }
+  return false
+}
+
+/**
+ * 命令文が `cd` / `git -C` で、会話の持ち場と関係しない別のリポジトリへ移ってから走るか。
+ * resolveRepoDir はその場合に持ち場のリポジトリを返すので、コミットの関所がよそのコミットを
+ * 持ち場の差分で判定して止めていた（文書置き場へのコミットが作業コピーの変更を理由に止まった。
+ * 2026-10-15）。よそのコミットは関所の対象外として素通しする。
+ */
+export function commandTargetsForeignRepo(input = {}) {
+  const command = input.tool_input?.command ?? ''
+  const stripped = stripHeredoc(command)
+  if (!/(^|[\s;&|(])cd\s|\s-C\s/.test(stripped)) return false
+  const cwd = input.cwd || process.cwd()
+  const base = process.env.CLAUDE_PROJECT_DIR || cwd
+  const target = commandTargetDir(command, cwd)
+  const root = target ? gitRootOf(target) : null
+  if (!root) return false
+  return !(within(root, base) || within(base, root))
+}
+
+/**
  * いま触っているリポジトリの根を決める。
  *
  * 会話の起点（CLAUDE_PROJECT_DIR）を当てにしない。複数のリポジトリを収めた親フォルダから
